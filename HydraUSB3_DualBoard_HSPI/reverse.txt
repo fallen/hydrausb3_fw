@@ -1,0 +1,157 @@
+FCLK 15 MHz
+uart 115200
+
+HD1: 
+si front montant : 1 0 1 1 0 0 1 1 0 0 1 1 0 0 1 1 etc...
+si front descendant : pareil
+
+Up HTCLK et Down HTCLK ont l'air décalés d'un quart de phase
+
+Maintenant le TX est configuré pour envoyer 1 seul packet HSPI de taille 512 bytes.
+
+1er transfert de 4 bytes (en mode x32):
+HD0 : 1 1 0 1 0 1     etc
+HD1 : 1 0 1 1 0 0     etc
+HD2 : 1 1 1 1 0 0 0 0 etc
+HD3 : 1 0 0 0 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 etc
+HD4 : 0 1 1 1 1 1 1 1 1 1 1 1 0 x 16 - 1 x 16 etc
+
+HD5 : 1
+HD6 : 1
+HD7 : 1
+HD8 : 1
+HD9 : 0 partout
+HD10: 1
+HD11: 1 puis 0 partout
+HD12: 0
+HD13: 0 quasi partout sauf à la toute fin (crc?)
+HD14: 1
+HD15: 1
+HD16: 1
+HD17: 1
+HD18: 0
+HD19: 1
+HD20: 0
+HD21: 1
+HD22: 0
+HD23: 1
+HD24: 1
+HD25: 1
+HD26: 0
+HD27: 0
+HD28: 0
+HD29: 0
+HD30: 1
+HD31: 1
+
+First 4 bytes are : 0xC3ABCDEF
+Code says : 
+        R32_HSPI_UDF0 = 0x3ABCDEF; // UDF0
+        R32_HSPI_UDF1 = 0x3456789; // UDF1
+
+So far, so good!
+
+
+Now let's test in x8 mode!!
+
+4 premiers transfert de 1 byte (en mode x8):
+HD0 : 1111
+HD1 : 1011
+HD2 : 1100
+HD3 : 1110
+HD4 : 0000
+HD5 : 1010
+HD6 : 1101
+HD7 : 1111
+HD8 : 0000
+HD9 : 0000
+
+8 and 9 are for "the fun" ...
+
+=> Byte 0 == 0xEF
+=> Byte 1 == 0xCD
+=> Byte 2 == 0xAB
+=> Byte 3 == 0xC3
+
+4 derniers transferts de 1 byte (en mode x8) pour choper le CRC:
+
+HD0 : 1101
+HD1 : 0001
+HD2 : 1111
+HD3 : 0011
+HD4 : 1110
+HD5 : 0000
+HD6 : 1101
+HD7 : 0000
+HD8 : 0000
+HD9 : 0000
+
+8 and 9 are for "the fun" ...
+
+=> Byte N-3 == 0x55
+=> Byte N-2 == 0x55
+=> Byte N-1 == 0x1C
+=> Byte N-0 == 0x4F
+
+
+Bonne config CRC16 pour transfert x8:
+
+````
+from crc import Configuration, Calculator
+
+polynome = 0x8005
+crc_width = 16
+init_value = 0xffff
+final_xor_value = 0xffff
+
+config = Configuration(
+    width=crc_width,
+    polynomial=polynome,
+    init_value=init_value,
+    final_xor_value=final_xor_value,
+    reverse_input=True,
+    reverse_output=True,
+)
+```
+
+Le CRC est calculé sur les data dans l'ordre d'arrivée sur les fils : little endian.
+data = header+payload
+
+Le CRC est bien envoyé en little endian aussi.
+
+
+Maintenant, faisons des tests avec HSPI en mode 32 bits @ 3.5 MHz:
+ATTENTION, les TX length suivant sont en réalité supérieur de 1 à ce qui est écrit dans le registre R16_HSPI_DMA_LEN0/1
+Si TX length = 512, on écrit 511! (pourquoi le bsp fait ça ?!)
+
+TX length = 512:
+D15-D0 : 1100110111101111 => 0xCDEF
+Vérifions TLL2B:  D31-D30 : 11
+
+TX length = 513:
+Vérifions TLL2B: D31-D30 : 00
+
+TX length = 514:
+Vérifions TLL2B: D31-D30 : 01
+
+TX length = 515:
+Vérifions TLL2B: D31-D30 : 10
+
+TX length = 516:
+Vérifions TLL2B: D31-D30 : 11
+
+Maintenant, faisons des tests avec HSPI en mode 16 bits @ 3.5 MHz:
+TX length = 512:
+Vérifions TLL2B: D15-D14 (2eme mot) : 11 
+
+TX length = 513:
+Vérifions TLL2B: D15-D14 (2eme mot) : 00
+
+TX length = 514:
+Vérifions TLL2B: D15-D14 (2eme mot) :  
+
+TX length = 515:
+Vérifions TLL2B: D15-D14 (2eme mot) :  
+
+TX length = 516:
+Vérifions TLL2B: D15-D14 (2eme mot) :  
